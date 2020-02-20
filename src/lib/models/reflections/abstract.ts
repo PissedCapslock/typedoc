@@ -3,6 +3,7 @@ import { Type } from '../types/index';
 import { Comment } from '../comments/comment';
 import { TypeParameterReflection } from './type-parameter';
 import { splitUnquotedString } from './utils';
+import { ProjectReflection } from './project';
 
 /**
  * Holds all data models used by TypeDoc.
@@ -35,29 +36,30 @@ export function resetReflectionID() {
  */
 export enum ReflectionKind {
     Global = 0,
-    ExternalModule = 1,
-    Module = 2,
-    Enum = 4,
-    EnumMember = 16,
-    Variable = 32,
-    Function = 64,
-    Class = 128,
-    Interface = 256,
-    Constructor = 512,
-    Property = 1024,
-    Method = 2048,
-    CallSignature = 4096,
-    IndexSignature = 8192,
-    ConstructorSignature = 16384,
-    Parameter = 32768,
-    TypeLiteral = 65536,
-    TypeParameter = 131072,
-    Accessor = 262144,
-    GetSignature = 524288,
-    SetSignature = 1048576,
-    ObjectLiteral = 2097152,
-    TypeAlias = 4194304,
-    Event = 8388608,
+    ExternalModule = 1 << 0,
+    Module = 1 << 1,
+    Enum = 1 << 2,
+    EnumMember = 1 << 4,
+    Variable = 1 << 5,
+    Function = 1 << 6,
+    Class = 1 << 7,
+    Interface = 1 << 8,
+    Constructor = 1 << 9,
+    Property = 1 << 10,
+    Method = 1 << 11,
+    CallSignature = 1 << 12,
+    IndexSignature = 1 << 13,
+    ConstructorSignature = 1 << 14,
+    Parameter = 1 << 15,
+    TypeLiteral = 1 << 16,
+    TypeParameter = 1 << 17,
+    Accessor = 1 << 18,
+    GetSignature = 1 << 19,
+    SetSignature = 1 << 20,
+    ObjectLiteral = 1 << 21,
+    TypeAlias = 1 << 22,
+    Event = 1 << 23,
+    Reference = 1 << 24,
 
     ClassOrInterface = Class | Interface,
     VariableOrProperty = Variable | Property,
@@ -139,7 +141,18 @@ export class ReflectionFlags extends Array<string> {
     }
 
     /**
-     * Is this member exported?
+     * True if the reflection is exported from its containing declaration. Note that if a file
+     * has no imports or exports, then TS assumes that the file is in a global scope and *all*
+     * declarations are exported.
+     * ```ts
+     * // a.ts
+     * namespace A { // isExported = false
+     *   export const b = 1 // isExported = true, even though the container is false.
+     * }
+     * export const b = 2 // isExported = true
+     * // b.ts
+     * const c = 1 // isExported = true, no imports/exports
+     * ```
      */
     get isExported(): boolean {
         return this.hasFlag(ReflectionFlag.Exported);
@@ -308,7 +321,7 @@ export abstract class Reflection {
     /**
      * The symbol name of this reflection.
      */
-    name = '';
+    name: string;
 
     /**
      * The original name of the TypeScript declaration.
@@ -502,7 +515,7 @@ export abstract class Reflection {
     /**
      * Return whether this reflection is the root / project reflection.
      */
-    isProject(): boolean { // this is ProjectReflection
+    isProject(): this is ProjectReflection {
         return false;
     }
 
@@ -531,66 +544,6 @@ export abstract class Reflection {
      * @param callback  The callback function that should be applied for each child reflection.
      */
     traverse(callback: TraverseCallback) { }
-
-    /**
-     * Return a raw object representation of this reflection.
-     * @deprecated Use serializers instead
-     */
-    toObject(): any {
-        const result: any = {
-            id:         this.id,
-            name:       this.name,
-            kind:       this.kind,
-            kindString: this.kindString,
-            flags:      {}
-        };
-
-        if (this.originalName !== this.name) {
-            result.originalName = this.originalName;
-        }
-
-        if (this.comment) {
-            result.comment = this.comment.toObject();
-        }
-
-        Object.getOwnPropertyNames(ReflectionFlags.prototype).forEach(name => {
-            const descriptor = Object.getOwnPropertyDescriptor(ReflectionFlags.prototype, name)!;
-            if (typeof descriptor.get === 'function' && this.flags[name] === true) {
-                result.flags[name] = true;
-            }
-        });
-
-        if (this.decorates) {
-            result.decorates = this.decorates.map((type) => type.toObject());
-        }
-
-        if (this.decorators) {
-            result.decorators = this.decorators.map((decorator) => {
-                const result: any = { name: decorator.name };
-                if (decorator.type) {
-                    result.type = decorator.type.toObject();
-                }
-                if (decorator.arguments) {
-                    result.arguments = decorator.arguments;
-                }
-                return result;
-            });
-        }
-
-        this.traverse((child, property) => {
-            if (property === TraverseProperty.TypeLiteral) {
-                return;
-            }
-            let name = TraverseProperty[property];
-            name = name.substr(0, 1).toLowerCase() + name.substr(1);
-            if (!result[name]) {
-                result[name] = [];
-            }
-            result[name].push(child.toObject());
-        });
-
-        return result;
-    }
 
     /**
      * Return a string representation of this reflection.

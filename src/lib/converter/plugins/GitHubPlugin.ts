@@ -6,8 +6,7 @@ import { Component, ConverterComponent } from '../components';
 import { BasePath } from '../utils/base-path';
 import { Converter } from '../converter';
 import { Context } from '../context';
-import { Option } from '../../utils/component';
-import { ParameterType } from '../../utils/options/declaration';
+import { BindOption } from '../../utils';
 
 /**
  * Stores data of a repository.
@@ -29,7 +28,7 @@ export class Repository {
     files: string[] = [];
 
     /**
-     * The user/organisation name of this repository on GitHub.
+     * The user/organization name of this repository on GitHub.
      */
     gitHubUser?: string;
 
@@ -163,11 +162,7 @@ export class GitHubPlugin extends ConverterComponent {
      */
     private ignoredPaths: string[] = [];
 
-    @Option({
-        name: 'gitRevision',
-        help: 'Use specified revision instead of the last revision for linking to GitHub source files.',
-        type: ParameterType.String
-    })
+    @BindOption('gitRevision')
     gitRevision!: string;
 
     /**

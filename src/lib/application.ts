@@ -14,18 +14,18 @@ import { Converter } from './converter/index';
 import { Renderer } from './output/renderer';
 import { Serializer } from './serialization';
 import { ProjectReflection } from './models/index';
-import { Logger, ConsoleLogger, CallbackLogger, PluginHost, writeFile } from './utils/index';
+import { Logger, ConsoleLogger, CallbackLogger, PluginHost, writeFile, readFile } from './utils/index';
 import { createMinimatch } from './utils/paths';
 
 import {
     AbstractComponent,
     ChildableComponent,
     Component,
-    Option,
     DUMMY_APPLICATION_OWNER
 } from './utils/component';
-import { Options, OptionsReadMode, OptionsReadResult } from './utils/options/index';
-import { ParameterType } from './utils/options/declaration';
+import { Options, BindOption } from './utils';
+import { TypeDocAndTSOptions } from './utils/options/declaration';
+import { addDecoratedOptions } from './utils/options/sources';
 
 /**
  * The default TypeDoc main application class.
@@ -42,9 +42,10 @@ import { ParameterType } from './utils/options/declaration';
  * to control the application flow or alter the output.
  */
 @Component({ name: 'application', internal: true })
-export class Application extends ChildableComponent<Application, AbstractComponent<Application>> {
-    options: Options;
-
+export class Application extends ChildableComponent<
+    Application,
+    AbstractComponent<Application>
+> {
     /**
      * The converter used to create the declaration reflections.
      */
@@ -65,29 +66,27 @@ export class Application extends ChildableComponent<Application, AbstractCompone
      */
     logger: Logger;
 
+    options: Options;
+
     plugins: PluginHost;
 
-    @Option({
-        name: 'logger',
-        help: "Specify the logger that should be used, 'none' or 'console'",
-        defaultValue: 'console',
-        type: ParameterType.Mixed
-    })
+    @BindOption('logger')
     loggerType!: string | Function;
 
-    @Option({
-        name: 'ignoreCompilerErrors',
-        help: 'Should TypeDoc generate documentation pages even after the compiler has returned errors?',
-        type: ParameterType.Boolean
-    })
+    @BindOption('ignoreCompilerErrors')
     ignoreCompilerErrors!: boolean;
 
-    @Option({
-        name: 'exclude',
-        help: 'Define patterns for excluded files when specifying paths.',
-        type: ParameterType.Array
-    })
+    @BindOption('exclude')
     exclude!: Array<string>;
+
+    @BindOption('inputFiles')
+    inputFiles!: string[];
+
+    @BindOption('options')
+    optionsFile!: string;
+
+    @BindOption('tsconfig')
+    project!: string;
 
     /**
      * The version number of TypeDoc.
@@ -99,17 +98,16 @@ export class Application extends ChildableComponent<Application, AbstractCompone
      *
      * @param options An object containing the options that should be used.
      */
-    constructor(options?: Object) {
+    constructor() {
         super(DUMMY_APPLICATION_OWNER);
 
         this.logger = new ConsoleLogger();
+        this.options = new Options(this.logger);
+        this.options.addDefaultDeclarations();
+        this.serializer = new Serializer();
         this.converter = this.addComponent<Converter>('converter', Converter);
-        this.serializer = this.addComponent<Serializer>('serializer', Serializer);
-        this.renderer = this.addComponent<Renderer>('renderer', Renderer);
-        this.plugins = this.addComponent('plugins', PluginHost);
-        this.options = this.addComponent('options', Options);
-
-        this.bootstrap(options);
+        this.renderer  = this.addComponent<Renderer>('renderer', Renderer);
+        this.plugins   = this.addComponent('plugins', PluginHost);
     }
 
     /**
@@ -117,18 +115,35 @@ export class Application extends ChildableComponent<Application, AbstractCompone
      *
      * @param options  The desired options to set.
      */
-    protected bootstrap(options?: Object): OptionsReadResult {
-        this.options.read(options, OptionsReadMode.Prefetch);
+    bootstrap(options: Partial<TypeDocAndTSOptions> = {}): { hasErrors: boolean, inputFiles: string[] } {
+        this.options.setValues(options); // Ignore result, plugins might declare an option
+        this.options.read(new Logger());
 
         const logger = this.loggerType;
         if (typeof logger === 'function') {
             this.logger = new CallbackLogger(<any> logger);
+            this.options.setLogger(this.logger);
         } else if (logger === 'none') {
             this.logger = new Logger();
+            this.options.setLogger(this.logger);
         }
 
         this.plugins.load();
-        return this.options.read(this.options.getRawValues(), OptionsReadMode.Fetch);
+        // Load decorated options from the plugins.
+        addDecoratedOptions(this.options);
+
+        this.options.reset();
+        this.options.setValues(options).mapErr(errors => {
+            for (const error of errors) {
+                this.logger.error(error.message);
+            }
+        });
+        this.options.read(this.logger);
+
+        return {
+            hasErrors: this.logger.hasErrors(),
+            inputFiles: this.inputFiles
+        };
     }
 
     /**
@@ -136,10 +151,6 @@ export class Application extends ChildableComponent<Application, AbstractCompone
      */
     get application(): Application {
         return this;
-    }
-
-    get isCLI(): boolean {
-        return false;
     }
 
     /**
@@ -151,7 +162,7 @@ export class Application extends ChildableComponent<Application, AbstractCompone
 
     public getTypeScriptVersion(): string {
         const tsPath = this.getTypeScriptPath();
-        const json = JSON.parse(FS.readFileSync(Path.join(tsPath, '..', 'package.json'), 'utf8'));
+        const json = JSON.parse(readFile(Path.join(tsPath, '..', 'package.json')));
         return json.version;
     }
 
@@ -267,8 +278,15 @@ export class Application extends ChildableComponent<Application, AbstractCompone
 
         const supportedFileRegex = this.options.getCompilerOptions().allowJs ? /\.[tj]sx?$/ : /\.tsx?$/;
         function add(file: string, entryPoint: boolean) {
-            const fileIsDir = FS.statSync(file).isDirectory();
-            if (fileIsDir && file.slice(-1) !== '/') {
+            let stats: FS.Stats;
+            try {
+                stats = FS.statSync(file);
+            } catch {
+                // No permission or a symbolic link, do not resolve.
+                return;
+            }
+            const fileIsDir = stats.isDirectory();
+            if (fileIsDir && !file.endsWith('/')) {
                 file = `${file}/`;
             }
 
@@ -295,11 +313,11 @@ export class Application extends ChildableComponent<Application, AbstractCompone
     /**
      * Print the version number.
      */
-    public toString() {
+    toString() {
         return [
             '',
-            'TypeDoc ' + Application.VERSION,
-            'Using TypeScript ' + this.getTypeScriptVersion() + ' from ' + this.getTypeScriptPath(),
+            `TypeDoc ${Application.VERSION}`,
+            `Using TypeScript ${this.getTypeScriptVersion()} from ${this.getTypeScriptPath()}`,
             ''
         ].join(typescript.sys.newLine);
     }

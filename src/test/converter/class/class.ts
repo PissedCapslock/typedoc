@@ -29,11 +29,13 @@ export class TestClass {
 
     /**
      * publicMethod short text.
+     * @category Test
      */
     public publicMethod() {}
 
     /**
      * protectedMethod short text.
+     * @category Test
      */
     protected protectedMethod() {}
 
@@ -46,6 +48,11 @@ export class TestClass {
      * staticMethod short text.
      */
     static staticMethod() {}
+
+    /**
+     * arrow method
+     */
+    arrowMethod = () => {};
 }
 
 export class TestSubClass extends TestClass {

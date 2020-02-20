@@ -1,21 +1,26 @@
 // @ts-check
 
+const assert = require('assert');
 const fs = require('fs-extra');
 const path = require('path');
 const TypeDoc = require('..');
+const ts = require('typescript');
 
-const app = new TypeDoc.Application({
-    mode: 'Modules',
-    target: 'ES5',
-    module: 'CommonJS',
+const app = new TypeDoc.Application();
+app.bootstrap({
+    mode: TypeDoc.SourceFileMode.Modules,
+    target: ts.ScriptTarget.ES5,
+    module: ts.ModuleKind.CommonJS,
     experimentalDecorators: true,
-    jsx: 'react',
+    jsx: ts.JsxEmit.React,
     lib: [
         "lib.dom.d.ts",
         "lib.es5.d.ts",
         "lib.es2015.iterable.d.ts",
         "lib.es2015.collection.d.ts"
     ],
+    name: 'typedoc',
+    excludeExternals: true
 });
 
 // Note that this uses the test files in dist, not in src, this is important since
@@ -25,6 +30,10 @@ const base = path.join(__dirname, '../dist/test/converter');
 /** @type {[string, () => void, () => void][]} */
 const conversions = [
     ['specs', () => { }, () => { }],
+    ['specs.d',
+        () => app.options.setValue('includeDeclarations', true),
+        () => app.options.setValue('includeDeclarations', false)
+    ],
     ['specs-without-exported',
         () => app.options.setValue('excludeNotExported', true),
         () => app.options.setValue('excludeNotExported', false)
@@ -49,7 +58,9 @@ function rebuildConverterTests(dirs) {
                 TypeDoc.resetReflectionID();
                 before();
                 const result = app.convert(src);
-                const data = JSON.stringify(result.toObject(), null, '  ')
+                const serialized = app.serializer.toObject(result);
+
+                const data = JSON.stringify(serialized, null, '  ')
                     .split(TypeDoc.normalizePath(base))
                     .join('%BASE%');
                 after();
@@ -65,7 +76,9 @@ async function rebuildRendererTest() {
     const out = path.join(__dirname, '../src/test/renderer/specs');
 
     await fs.remove(out)
+    app.options.setValue('excludeExternals', false);
     app.generateDocs(app.expandInputFiles([src]), out)
+    app.options.setValue('excludeExternals', true);
     await fs.remove(path.join(out, 'assets'))
 
     /**
@@ -115,6 +128,8 @@ async function main(command = 'all', filter = '') {
             if (!stat.isDirectory()) return false;
             return fullPath.endsWith(filter);
         }).map(([path]) => path));
+    } else if (filter !== '') {
+        console.warn('Specifying a filter when rebuilding render specs only has no effect.');
     }
 
     if (['all', 'renderer'].includes(command)) {

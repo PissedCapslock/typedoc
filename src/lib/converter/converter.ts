@@ -3,11 +3,11 @@ import * as _ts from '../ts-internal';
 import * as _ from 'lodash';
 
 import { Application } from '../application';
-import { ParameterType } from '../utils/options/declaration';
 import { Reflection, Type, ProjectReflection } from '../models/index';
 import { Context } from './context';
 import { ConverterComponent, ConverterNodeComponent, ConverterTypeComponent, TypeTypeConverter, TypeNodeConverter } from './components';
-import { Component, Option, ChildableComponent, ComponentClass } from '../utils/component';
+import { Component, ChildableComponent, ComponentClass } from '../utils/component';
+import { BindOption } from '../utils';
 import { normalizePath } from '../utils/fs';
 import { createMinimatch } from '../utils/paths';
 
@@ -34,52 +34,25 @@ export class Converter extends ChildableComponent<Application, ConverterComponen
     /**
      * The human readable name of the project. Used within the templates to set the title of the document.
      */
-    @Option({
-        name: 'name',
-        help: 'Set the name of the project that will be used in the header of the template.'
-    })
+    @BindOption('name')
     name!: string;
 
-    @Option({
-        name: 'externalPattern',
-        help: 'Define patterns for files that should be considered being external.',
-        type: ParameterType.Array
-    })
+    @BindOption('externalPattern')
     externalPattern!: Array<string>;
 
-    @Option({
-        name: 'includeDeclarations',
-        help: 'Turn on parsing of .d.ts declaration files.',
-        type: ParameterType.Boolean
-    })
+    @BindOption('includeDeclarations')
     includeDeclarations!: boolean;
 
-    @Option({
-        name: 'excludeExternals',
-        help: 'Prevent externally resolved TypeScript files from being documented.',
-        type: ParameterType.Boolean
-    })
+    @BindOption('excludeExternals')
     excludeExternals!: boolean;
 
-    @Option({
-        name: 'excludeNotExported',
-        help: 'Prevent symbols that are not exported from being documented.',
-        type: ParameterType.Boolean
-    })
+    @BindOption('excludeNotExported')
     excludeNotExported!: boolean;
 
-    @Option({
-        name: 'excludePrivate',
-        help: 'Ignores private variables and methods',
-        type: ParameterType.Boolean
-    })
+    @BindOption('excludePrivate')
     excludePrivate!: boolean;
 
-    @Option({
-        name: 'excludeProtected',
-        help: 'Ignores protected variables and methods',
-        type: ParameterType.Boolean
-    })
+    @BindOption('excludeProtected')
     excludeProtected!: boolean;
 
     /**
@@ -285,6 +258,16 @@ export class Converter extends ChildableComponent<Application, ConverterComponen
         const errors = this.compile(context);
         const project = this.resolve(context);
 
+        const dangling = project.getDanglingReferences();
+        if (dangling.length) {
+            this.owner.logger.warn([
+                'Some names refer to reflections that do not exist.',
+                'This can be caused by exporting a reflection only under a different name than it is declared when excludeNotExported is set',
+                'or by a plugin removing reflections without removing references. The names that cannot be resolved are:',
+                ...dangling
+            ].join('\n'));
+        }
+
         this.trigger(Converter.EVENT_END, context);
 
         return {
@@ -386,6 +369,10 @@ export class Converter extends ChildableComponent<Application, ConverterComponen
         includedSourceFiles.forEach((sourceFile) => {
             this.convertNode(context, sourceFile);
         });
+
+        if (this.application.ignoreCompilerErrors) {
+            return [];
+        }
 
         let diagnostics = program.getOptionsDiagnostics().filter(isRelevantError);
         if (diagnostics.length) {
